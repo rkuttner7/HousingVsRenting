@@ -1,0 +1,38 @@
+---
+title: "Oil Tank Search"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("magrittr")
+
+storage_tank <- readr::read_csv(file.path("..","data-raw", 
+                                          "Underground_Storage_Tank.csv"))
+
+street_address <- "11521 39th AVE NE"
+
+street_number <- stringr::str_split(street_address, " " )[[1]][1]
+
+storage_tank_subset <- storage_tank %>%
+  dplyr::filter(grepl(pattern = paste0(#"^", 
+                                       street_number),
+                      x = Address))
+```
+
+[Corddry oil tank decommission query](https://data.seattle.gov/Public-Safety/Corddry-oil-tank-decommission-query/nkmp-yxzx)
+
+Records of Seattle Fire Department (SFD) permits related to decommissioning of a residential heating oil tank, permit code 6103. A record with incomplete tank info indicates that the required follow-up report has not been received by SFD. 
+Please note that SFD records begin in 1996 when state requirement was introduced. Decommissioning of a residential heating oil tank might have occurred prior to 1996, in which SFD will not have a record.
+
+(Alternative, not used for reprot) [Underground Storage Tank records](https://data.seattle.gov/Public-Safety/Underground-Storage-Tank-UST-Records-Residential/xvj2-ai6y)
+
+## List of oil tanks
+
+```{r roll30Summary, include=TRUE, echo=FALSE}
+DT::datatable(storage_tank_subset, 
+                # colnames = c('N days' = 'N_records',
+                #              "Std. Dev." = "sd"),
+                caption = "City of Seattle Storage Tanks",
+                options = list(pageLength = 25))
+```

@@ -1,0 +1,54 @@
+---
+title: "Real Estate Broker Exam Prep"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Real Estate Broker Exam Prep}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(HousingVsRenting)
+```
+
+Notes on the Peterson’s Master the Real Estate License Exams.
+
+# State Specific
+
+Washington 
+Real Estate Commission 
+Department of Licensing 
+2000 Fourth Avenue West 
+Olympia, WA 98502 
+P.O. Box 9015 
+Olympia, WA 98507-9015 
+Phone: 360-664-6500 
+Fax: 360-586-0998 
+Web site: www.dol.wa.gov/business/realestate/realestatecommission.html 
+
+## Washington Real Estate Law Rules
+
+https://www.dol.wa.gov/business/realestate/lawsrules.html
+
+Includes:
+  The Law Relating to Real Estate Brokers and Managing Brokers
+
+## Washington Approved Courses
+
+Posted Curriculum:
+https://www.dol.wa.gov/business/realestate/curriculum.html
+
+Online search:
+https://professions.dol.wa.gov/s/course-search
+
+
+# Law of Agency
+
+**AGENT** 

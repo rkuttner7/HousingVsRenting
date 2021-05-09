@@ -1,0 +1,157 @@
+---
+title: "asset analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#library(HousingVsRenting)
+devtools::load_all()
+
+loan_specs <- tibble::tribble(
+  ~ amortization, ~ int_rate_pct,
+    30,             2.8,
+    20,             2.6,
+    15,             2.1
+  )
+
+purchase_price <- 1100000
+int_rate_pct <- 2.8
+int_rate_pct_20 <- 2.6
+int_rate_pct_15 <- 2.1
+property_tax_pct <- 0.93
+```
+
+cash: $410k
+
+
+# cash-flow
+
+What the amount we want to put into a downpayment?
+
+For a $ `r purchase_price/1000` K house the monthly mortgage payment (no fees nor taxes) for a 30 year loan is: 
+```{r monyhly_30, echo=FALSE}
+
+# Build mortgage payment objects for each down payment
+# -- the down payments are hard coded as 200K to 400K
+#       in intervals of $50k.
+mortg_by_downpay <- function(purchase_price, int_rate_pct, loan_years){
+  foo <- function(d) {kahnModel(purchasePrice = purchase_price, downpayment = d,
+                                
+                                interestRate = int_rate_pct/100, 
+                                principalAmortizaion = loan_years,
+                                compound_periods = 12)}
+  # mortgage payment objects across down payments
+  Map(foo, d = list((10^5)*2, (10^5)*2.5, (10^5)*3, (10^5)*3.5, (10^5)*4))
+}
+
+# Extract monthly mortgage payment from mortgage 
+#   payment objects for each down payment.
+# -- the down payments are hard coded as 200K to 400K
+#       in intervals of $50k.
+get_pay_monthly <- function(mortg_){
+    pay_monthly <- unlist(Map(function(x) x[["fixedMortgagePayment"]], x = mortg_))
+  names(pay_monthly) <- c("200k", "250k", "300k", "350k", "400k")
+  pay_monthly
+}
+
+# mortg_30 <- Map(foo, d = list((10^5)*2, (10^5)*2.5, (10^5)*3, (10^5)*3.5, (10^5)*4)) 
+# pay_monthly <- unlist(Map(function(x) x[["fixedMortgagePayment"]], x = mortg_30))
+# 
+# names(pay_monthly) <- c("200k", "250k", "300k", "350k", "400k")
+
+mortg_30 <- mortg_by_downpay(purchase_price = purchase_price, 
+                             int_rate_pct = int_rate_pct, loan_years = 30)
+pay_monthly <- get_pay_monthly(mortg_30)
+
+format(round(pay_monthly, 0), nsmall=0, big.mark=",") 
+
+```
+
+The monthly mortgage payment (no fees nor taxes) for a 20 year loan is: 
+```{r monyhly_20, echo=FALSE}
+
+mortg_20 <- mortg_by_downpay(purchase_price = purchase_price, 
+                             int_rate_pct = int_rate_pct_20, loan_years = 20)
+pay_monthly <- get_pay_monthly(mortg_20)
+
+format(round(pay_monthly, 0), nsmall=0, big.mark=",") 
+
+```
+Monthly costs:
+```{r, echo=FALSE}
+
+tibble::tribble(
+  ~'', ~`monthly cost`,
+  'property tax', purchase_price*property_tax_pct/100/12,
+  'Home Insurance', 197)
+
+```
+
+Lifetime interest paid:
+```{r int_lifetime, echo=FALSE}
+
+lifetime_int_30 <- unlist(Map(function(tmp) {
+(tmp$fixedMortgagePayment*12*tmp$principalAmortizaion) - (tmp$purchasePrice - tmp$downpayment)   
+}, tmp = mortg_30))
+
+lifetime_int_20 <- unlist(Map(function(tmp) {
+(tmp$fixedMortgagePayment*12*tmp$principalAmortizaion) - (tmp$purchasePrice - tmp$downpayment)   
+}, tmp = mortg_20))
+
+x <- data.table::rbindlist(list(data.frame(Interest = lifetime_int_30,
+                                           Amortization = "30",
+                                 Downpayment = c("200k", "250k", "300k", 
+                                                 "350k", "400k")),
+                                 data.frame(Interest = lifetime_int_20,
+                                           Amortization = "20", 
+                                 Downpayment = c("200k", "250k", "300k", 
+                                                 "350k", "400k"))))
+x$Interest_fmt <- format(round(x$Interest, 0), nsmall=0, big.mark=",") 
+tidyr::pivot_wider(x, id_cols = Amortization, 
+                   names_from = Downpayment, values_from = Interest_fmt)
+
+```
+
+~~Percent of~~ net income
+```{r, echo=FALSE}
+190*(1-0.26)/12-1.750
+```
+
+# liquidity (cash on hand for crisis or home improvement)
+
+- Medical emergency expense
+- Car issues
+- House Improvements (urgent)
+- closing costs
+- Move in fees
+- Remodeling (construction to aesthetics)
+- living expense
+
+## short term cash reserves
+
+
+### Costs for closing <sup>\*</sup>
+- $2100 Title Insurance fees
+- Government recording fees
+- \$1400 Escrow company fees (buyer unusually pays \$700)
+- $9600 [Real Estate Excise Tax](https://dor.wa.gov/taxes-rates/other-taxes/real-estate-excise-tax) (1.28%  sale price, usually paid by the seller)
+- Real Estate commissions
+- Document preparation fees
+- Mortgage origination fees
+- Mortgage lender underwriting fee (maybe same as above) \$1,195
+- Home appraisal fees
+- Mortgage discount points or prepaid interest
+- Credit report processing fees
+- Processor fees
+- Survey fees
+- Home owners insurance (first year upfront)
+
+\* Caliber lists total closing cost range \$4,250 - \$4,750.
+
+**Note**: Waive the appraisal (useless)
+
+# risk-mitigation / diversification
+
+Cash reserved can be invested into other areas

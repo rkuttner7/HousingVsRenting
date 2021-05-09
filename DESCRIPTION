@@ -1,0 +1,30 @@
+Package: HousingVsRenting
+Type: Package
+Title: Value comparison of housing compared to renting.
+Version: 0.1.0
+Author: person("Rafael", "Kuttner", email = "r.i.kuttner@gmail.com",
+                  role = c("aut", "cre"))
+Maintainer: The package maintainer <r.i.kuttner@gmail.com>
+URL: https://github.com/rkuttner7/HousingVsRenting
+BugReports: https://github.com/rkuttner7/HousingVsRenting/issues
+Description: 
+  To decide the value of a home by comparing its value to the renting. Use different assumptions to get a sensitive result.
+Depends: R (>= 2.10)
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 6.1.1
+Imports: 
+    data.table,
+    lubridate
+Suggests:
+    covr, 
+    DT,
+    ggplot2,
+    ggthemes,
+    knitr,
+    magrittr,
+    testthat,
+    rmarkdown,
+    scales
+VignetteBuilder: knitr

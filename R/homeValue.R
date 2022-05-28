@@ -38,31 +38,36 @@ pay <- function(principal, interest, duration, payfreq, compoundfreq) {
   return(res)
 }
 
-#'
-#' @param x initial monthly value
-#' @param inflation percent change
-#' @param compounding either "monthly" or "yearly"
-#' @param years numeric scalar
+#' Increase the value either monthly or yearly
+#' @details 
+#' The initial value increases by an annual rate
+#' adjusted incrementally every month or yearly. The interest
+#' is compounded annually, in either case.
+#' @inheritParams compoundInterest
+#' @param adjustment either "monthly" or "yearly"
 #' @keywords internal
-inflateValue <- function(x, inflation, 
-                         compounding = c("yearly", "monthly"), years){
+inflateValue <- function(time, principal, interest_rate, 
+                         adjustment = c("yearly", "monthly")){
   
-  k <- dplyr::case_when(compounding == "monthly" ~ 12L,
-                        compounding == "yearly" ~ 1L,
-                        TRUE ~ NA_integer_)
+  rlang::arg_match(adjustment)
   
-  time_vec <- if(compounding == "yearly"){
-    0:(years - 1)
-  } else {
-    1:(years*12)
-  }
-
-  y <- x * (1 + inflation / k)^(time_vec)
-
-  if(compounding == "yearly"){
-         rep(y, each = 12)
+  if(adjustment == "monthly"){
+    compoundInterest(time,
+                     principal, 
+                     interest_rate / 12,
+                     1 / 12)
+    } else if (adjustment == "yearly") {
+      # n_years <- max(floor(time/12))
+      years_floor <- floor(time/12)
+      # units_per_floor <- as.integer(table(years_floor))
+      compoundInterest(years_floor,
+                                       principal, 
+                                       interest_rate,
+                                       1)
+      
     } else{
-      y
+      stop(sprintf("Argument 'adjustment' has unexpected value: {%s}", 
+                   adjustment))
     }
 }
 
@@ -134,8 +139,10 @@ new_kahnModel <- function(purchasePrice, downpayment, interestRate,
                           i = interestRate, fixedMortgagePayment, 
                           compound_periods)
   
-  interestDebt <-  c(0, tail(debt_t, -1)) * interestRate / compound_periods
+  interestDebt <-  dplyr::lag(debt_t, default = 0) * interestRate / compound_periods
+    #c(0, tail(debt_t, -1)) * interestRate / compound_periods
   paid_principal <- fixedMortgagePayment - interestDebt
+  paid_principal[1] <- 0 # no payment at time of purchase [t = 0]
   
   structure(class = "kahnModel", list(
     # attributes
@@ -172,7 +179,7 @@ validate_kahnModel <- function(x){
   if(!is.numeric(x[[1]])) {
     stop(
       "The `purchasePrice` must be numeric",
-      .call = FALSE
+      call. = FALSE
     )
     x
   }
@@ -188,16 +195,18 @@ x
 #' @param appreciationHome average annual appreciation in home value
 #' @param marginalIncomeTaxRate annual tax on income earned
 #' @param inflation average annual increase in the cost of goods
+#' @param time_years number of years to model home value
 #' @examples 
 #' mortgageModel <- kahnModel(purchasePrice = 750000, downpayment = 280000,
 #'                            #pctDown = 0.2,
-#'                            interestRate = 0.06, principalAmortizaion = 30,
+#'                            interestRate = 0.06, principalAmortizaion = 15,
 #'                            compound_periods = 12)
 #'  homeValue(mortgageModel,
 #'            propertyTaxRate = 0.0125, maintenance = 1000,
 #'            housingAssociationDues = 0, insurance = 1500,
 #'            appreciationHome = 0.03, marginalIncomeTaxRate = 0.3,
-#'            inflation = 0.02)
+#'            inflation = 0.02,
+#'            time_years = 20)
 homeValue <- function(mortgageModel, 
                       propertyTaxRate,
                       maintenance,
@@ -205,74 +214,178 @@ homeValue <- function(mortgageModel,
                       insurance,
                       appreciationHome,
                       marginalIncomeTaxRate,
-                      inflation){
+                      inflation,
+                      time_years){
+  
+  # hard code
+  # costs to purchase home
+  #  includes: 
+  #    $2100 Title Insurance fees; 
+  #    $1400 Escrow company fees (buyer unusually pays \$700)
+  #    $1,195 Mortgage lender underwriting fee
+  purchase_transaction_costs <- 3995
+  
+  # set time to arbitrary number years (can be longer or shorter than mortgage)
+  time_month <- 0:(12*time_years) 
+  
+  adjust_length <- function(x, length_new){
+    additional_cells <- length_new - length(x)
+    length(x) <- length_new
+    if(additional_cells > 0) return(tidyr::replace_na(x, 0))
+    x
+  }
+  length_new <- length(time_month)
   
   # Values in mortgage payment object
   principalAmortizaion <- mortgageModel$principalAmortizaion
   purchasePrice <- mortgageModel$purchasePrice
-  interestDebt <- mortgageModel$get_paymentsDF()$Interest_on_debt
-  fixedMortgagePayment <- mortgageModel$fixedMortgagePayment
-  time_month <- 0:(12*mortgageModel$principalAmortizaion) 
+  downpayment <- mortgageModel$downpayment
   
-  homeValue_t <- inflateValue(purchasePrice, appreciationHome, 
-                              compounding = "yearly", 
-                              years = principalAmortizaion)
- 
- maintenance_t <- inflateValue(maintenance/12, inflation, 
-                               compounding = "yearly", 
-                               years = principalAmortizaion)
- 
- hoaDues_t <- inflateValue(housingAssociationDues, 
-                                          inflation, 
-                           compounding = "yearly", 
-                           years = principalAmortizaion)
- 
- insurance_t <- inflateValue(insurance/12, inflation, 
-                             compounding = "yearly", 
-                             years = principalAmortizaion)
+  # modify vectors length to match length [time_month], 
+  #  can be longer or shorter than than mortgage
+  interestDebt <- adjust_length(mortgageModel$get_paymentsDF()$Interest_on_debt,
+                                length_new)
+  debt_t <- adjust_length(mortgageModel$get_paymentsDF()$Debt,
+                          length_new)
+  Paid_principal <- adjust_length(mortgageModel$get_paymentsDF()$Paid_principal,
+                                  length_new)
+  fixedMortgagePayment <- adjust_length(mortgageModel$fixedMortgagePayment,
+                                        length_new)
+  # stop("rename loan time to [time_month_loan] from [time_month]")
+  # time_month_loan <- 0:(12*mortgageModel$principalAmortizaion)
 
- propertyTax_t <- homeValue_t * propertyTaxRate / 12
+  
+  homeValue_t <- inflateValue(time_month,
+                              purchasePrice, appreciationHome, 
+                              adjustment = "monthly")
+
+  equity_t <- cumsum(Paid_principal)
+    #purchasePrice - (debt_t - interestDebt)  #homeValue_t - debt_t
+ 
+  
+  maintenance_t <- dplyr::lag( # no cost at time of purchase (t = 0)
+    inflateValue(time_month,
+                 maintenance/12, inflation, 
+                 adjustment = "monthly"), 
+    default = 0) 
+
+ hoaDues_t <- dplyr::lag( # no cost at time of purchase (t = 0)
+   inflateValue(time_month,
+                housingAssociationDues, inflation, 
+                adjustment = "yearly"),
+   default = 0)
+ 
+ insurance_t <- dplyr::lag( # no cost at time of purchase (t = 0)
+   inflateValue(time_month,
+                             insurance/12, inflation, 
+                             adjustment = "yearly"),
+   default = 0)
+
+ propertyTax_t <- dplyr::lag(# no cost at time of purchase (t = 0)
+   homeValue_t * propertyTaxRate / 12, default = 0)
+
  # Income tax savings from interest deduction
  interestDeduction <- (interestDebt + propertyTax_t) * marginalIncomeTaxRate
  
- cashOut <- fixedMortgagePayment + insurance_t + hoaDues_t + maintenance_t +
-   propertyTax_t - interestDeduction
+ cashOut <- dplyr::case_when(
+   # closing costs at time of purchasing home (t = 0)
+   time_month == 0 ~ purchase_transaction_costs +
+     interestDebt + insurance_t + hoaDues_t + 
+     maintenance_t + propertyTax_t - interestDeduction,
+   time_month > 0 ~ interestDebt + insurance_t + hoaDues_t + 
+     maintenance_t + propertyTax_t - interestDeduction,
+   TRUE ~ NA_real_
+ ) 
  
+sales_transaction_cost_t <- sale_transaction_cost(homeValue_t)
+ 
+ # Net cash for selling home
+ sales_profit_t <- (homeValue_t - purchasePrice) + 
+   0 - 
+   (
+     (cumsum(cashOut)) +
+       sales_transaction_cost_t +
+       capitol_gains_tax(basis = purchasePrice, 
+                     adj_sales = homeValue_t - sales_transaction_cost_t, 
+                     tax_rate = 0.20, 
+                     tax_limit = 5*10^5) )
+ 
+
  structure(class = c("homeCosts", "kahnModel"), list(
    # attributes
-   maintenance = maintenance_t, 
-   hoaDues = hoaDues_t, 
-   insurance = insurance_t, 
-   homeValue = homeValue_t,
-   propertyTax = propertyTax_t,
-   interestDeduction = interestDeduction,
-   cashOut = cashOut,
-#   principalAmortizaion = principalAmortizaion,
-#   compound_periods = compound_periods,
-#   fixedMortgagePayment = fixedMortgagePayment,
+   principalAmortizaion = mortgageModel$principalAmortizaion,
+   purchasePrice = mortgageModel$purchasePrice,
+   downpayment = mortgageModel$downpayment,
+   fixedMortgagePayment = mortgageModel$fixedMortgagePayment,
+   propertyTaxRate = propertyTaxRate,
+   maintenance = maintenance,
+   housingAssociationDues = housingAssociationDues,
+   insurance = insurance,
+   appreciationHome = appreciationHome,
+   marginalIncomeTaxRate = marginalIncomeTaxRate,
+   inflation = inflation,
+   time_years = time_years,
+   
    # methods
-   get_vakueDF = function() {
+   get_valueDF = function() {
      data.frame(Time = time_month,
-                Debt = debt_t,
-                Interest_on_debt = interestDebt,
-                Paid_principal = paid_principal
+                equity = equity_t,
+                propertyValue = homeValue_t,
+                salesProfit = sales_profit_t,
+                interestDeduction = interestDeduction,
+                maintenance = maintenance_t, 
+                hoaDues = hoaDues_t, 
+                insurance = insurance_t, 
+                propertyTax = propertyTax_t,
+                housingCosts  = cashOut
      )
    }
  ))
 }
 
-#' calculate monlthy payments with interest compounded at yearly of monthly.
-#' @param x0 numeric starting value
-#' @param interest increase from the previous value
-#' @param compoundPeriods number of times starting value is increased
-#' by a factor of the interest rate per year
-#' @param years number of years to calculate monthly payments
+#' Fixed transaction costs when selling home
+#' @details 
+#' Broker's fee of 6%
+#' Real Estate Excise 1.28% of property sale
+#' @param sales_price selling price
+sale_transaction_cost <- function(sales_price){
+  (sales_price * 0.06) + (sales_price * 0.0128) 
+}
+
+#' Capital Gains Tax
+#' @param basis Original down payment plus improvements
+#' @param adj_sales Selling price minus the transaction costs
+#' @param tax_rate rate of taxation
+#' @param tax_limit 
+capitol_gains_tax <- function(basis, adj_sales, tax_rate, tax_limit){
+  net_profit <- (basis - adj_sales)
+  dplyr::case_when(
+    tax_limit < net_profit ~ net_profit * tax_rate,
+    tax_limit >= net_profit ~ 0,
+    TRUE ~ NA_real_)
+}
+
+#' Value including interest accrued by compound
+#' @param time vector of duration money is accruing interest
+#' @param principal investment amount
+#' @param interest_rate interest rate
+#' @param compund_periods_per_time_unit number of times that interest 
+#'  is compounded per unit  
 #' @examples 
-#' # rent increased 10% annually for 30 years
-#'   rentInitial <- compoundInterest(15000, 0.10, 1, 30)
-compoundInterest <- function(x0, interest, compoundPeriods, years){
-  time_intervals <- 0:(12 * principalAmortizaion)
+#'  # One year with 3% interest, compounded annually
+#'  compoundInterest(c(0,1), 10, 0.03, 1)
+#'  
+#'  # 12 months with 3% annual interest, compounded annually
+#'  compoundInterest(c(0,12), 10, 0.03/12, 1/12)
+#' @references https://www.thecalculatorsite.com/articles/finance/compound-interest-formula.php
+compoundInterest <- function(time,
+                             principal, 
+                             interest_rate,
+                             compund_periods_per_time_unit){
   
+  principal * (1 + (interest_rate / compund_periods_per_time_unit)) ^ (
+    compund_periods_per_time_unit * time
+  )
 }
 
 #' Time to break even.
@@ -286,3 +399,150 @@ compoundInterest <- function(x0, interest, compoundPeriods, years){
 time_to_break_even <- function(rate_base, rate_plus, addtl_down){
   addtl_down/(x - y)
 }
+
+#' user helper constructor for renter model
+#' Model for projecting the cost of renting over time.
+#' @param rent_month monthly rental cost initially
+#' @examples
+#' renterModel(rent_month = 1200)
+renterModel <- function(rent_month){
+  x <- validate_renterModel(new_renterModel(rent_month))
+  x
+}
+
+#' constructor function
+#' Have one argument for the base object, and one for each attribute.
+#' @examples 
+#'  new_renterModel(rent_month = 1200)
+new_renterModel <- function(rent_month){
+  
+  structure(class = "renterModel", list(
+    # attributes
+    rent_month = rent_month
+  ))
+}
+
+#' Rather than encumbering the constructor with 
+#' complicated checks, it’s better to put them 
+#' in a separate function.
+#' Check the type of the base object and the types of each attribute
+#' @examples 
+#' validate_renterModel( new_renterModel(rent_month = 1200))
+validate_renterModel <- function(x){
+  if(!is.numeric(x[[1]])) {
+    stop(
+      "The `rent_month` must be numeric",
+      call. = FALSE
+    )
+    x
+  }
+  x
+}
+
+#' Costs associated with renting
+#' @description 
+#' Rent appreciation compounded annually
+#' @param rentModel model of rental costs
+#' @param appreciationRent average annual increase in the cost of rent
+#' @param adjustment compound periods, either "monthly" or "yearly"
+#' @param time_years number of years to model home value
+#' @examples 
+#' rent_Model <- renterModel(rent_month = 1200)
+#' 
+#'  rentValue(rent_Model,
+#'            appreciationRent = 0.05, 
+#'            adjustment = "yearly"
+#'            time_years = 20)
+rentValue <- function(rentModel, 
+                      appreciationRent,
+                      adjustment,
+                      time_years){
+  
+  # set time to arbitrary number years (can be longer or shorter than mortgage)
+  time_month <- 0:(12*time_years) 
+  
+  # Values in mortgage payment object
+  rent_month <- rentModel$rent_month
+  
+  rentValue_t <- inflateValue(time_month,
+                              rent_month, appreciationRent, 
+                              adjustment = adjustment)
+  
+  structure(class = c("rentCosts", "renterModel"), list(
+    # attributes
+    rent_month = rentModel$rent_month,
+    appreciationRent = appreciationRent,
+    time_years = time_years,
+    
+    # methods
+    get_valueDF = function() {
+      data.frame(Time = time_month,
+                 rent = rentValue_t
+      )
+    }
+  ))
+}
+
+#' Value of investments and costs associated with owning or renting a home
+#' @param value_model value model, either 'homeCosts' or 'rentCosts'
+#' @param cash_on_hand cash available for non-home investment
+#' @param investment_interest average annual appreciation from cash investments
+#' @examples 
+#' mortgageModel <- kahnModel(purchasePrice = 750000, downpayment = 280000,
+#'                            #pctDown = 0.2,
+#'                            interestRate = 0.06, principalAmortizaion = 15,
+#'                            compound_periods = 12)
+#'                            
+#' homeValue_model <- homeValue(mortgageModel,
+#'                              propertyTaxRate = 0.0125, maintenance = 1000,
+#'                              housingAssociationDues = 0, insurance = 1500,
+#'                              appreciationHome = 0.03, 
+#'                              marginalIncomeTaxRate = 0.3, inflation = 0.02,
+#'                              time_years = 20)
+#'                              
+#' investmentValue(homeValue_model, 100000, 0.05)
+investmentValue <- function(value_model, cash_on_hand, investment_interest){
+  UseMethod("investmentValue", x)
+}
+
+investmentValue.default <- function(...){
+  stop("Class must be homeCosts or rentCosts", 
+       call. = FALSE)
+  }
+
+investmentValue.homeCosts <- function(value_model, cash_on_hand, 
+                                      investment_interest){
+  
+  time_month <- value_model$get_valueDF()$Time
+  
+  net_value <- value_model$get_valueDF()$salesProfit
+  
+  cashValue_t <- inflateValue(time_month,
+                              cash_on_hand, investment_interest, 
+                              adjustment = "monthly")
+  
+  data.frame(
+    Time = time_month,
+    net_value = net_value + cashValue_t
+    )
+  
+  }
+
+investmentValue.rentCosts <- function(value_model, cash_on_hand, 
+                                      investment_interest){
+  
+  time_month <- value_model$get_valueDF()$Time
+  
+  # rent is a cost
+  net_value <- -1 * value_model$get_valueDF()$rent
+  
+  cashValue_t <- inflateValue(time_month,
+                              cash_on_hand, investment_interest, 
+                              adjustment = "monthly")
+  
+  data.frame(
+    Time = time_month,
+    net_value = net_value + cashValue_t
+  )
+  }
+

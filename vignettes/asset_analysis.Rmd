@@ -4,35 +4,30 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 
 #library(HousingVsRenting)
 devtools::load_all()
 
 loan_specs <- tibble::tribble(
-  ~ amortization, ~ int_rate_pct,
-    30,             2.8,
-    20,             2.6,
-    15,             2.1
+  ~ loan_years, ~ int_rate_pct,
+    30,             4.974,
+    20,             4.55,
+    15,             4.142
   )
 
-purchase_price <- 1100000
-int_rate_pct <- 2.8
-int_rate_pct_20 <- 2.6
-int_rate_pct_15 <- 2.1
+purchase_price <- 1235000
+
 property_tax_pct <- 0.93
+
+insurance_monthly <- 197 # home insurance per month
+
+# Simulated appreciation per year (eg. 0.03 is 3% increase year over year)
+appreciation_home_annual <- 0.03
 ```
 
-cash: $410k
 
-
-# cash-flow
-
-What the amount we want to put into a downpayment?
-
-For a $ `r purchase_price/1000` K house the monthly mortgage payment (no fees nor taxes) for a 30 year loan is: 
-```{r monyhly_30, echo=FALSE}
-
+```{r build_models, echo=FALSE, include=FALSE}
 # Build mortgage payment objects for each down payment
 # -- the down payments are hard coded as 200K to 400K
 #       in intervals of $50k.
@@ -44,6 +39,14 @@ mortg_by_downpay <- function(purchase_price, int_rate_pct, loan_years){
                                 compound_periods = 12)}
   # mortgage payment objects across down payments
   Map(foo, d = list((10^5)*2, (10^5)*2.5, (10^5)*3, (10^5)*3.5, (10^5)*4))
+  #Map(foo, d = list((10^5)*3, (10^5)*3.5, (10^5)*4, (10^5)*4.5, (10^5)*5))
+}
+
+format_downpayment_cols <- function(x){
+  names(x) <- c("200k", "250k", "300k", "350k", "400k")
+  #names(x) <- c("300k", "350k", "400k", "450k", "500k")
+  
+  format(round(x, 0), nsmall=0, big.mark=",") 
 }
 
 # Extract monthly mortgage payment from mortgage 
@@ -52,71 +55,205 @@ mortg_by_downpay <- function(purchase_price, int_rate_pct, loan_years){
 #       in intervals of $50k.
 get_pay_monthly <- function(mortg_){
     pay_monthly <- unlist(Map(function(x) x[["fixedMortgagePayment"]], x = mortg_))
-  names(pay_monthly) <- c("200k", "250k", "300k", "350k", "400k")
-  pay_monthly
+    
+  format_downpayment_cols(pay_monthly)
 }
 
-# mortg_30 <- Map(foo, d = list((10^5)*2, (10^5)*2.5, (10^5)*3, (10^5)*3.5, (10^5)*4)) 
-# pay_monthly <- unlist(Map(function(x) x[["fixedMortgagePayment"]], x = mortg_30))
-# 
-# names(pay_monthly) <- c("200k", "250k", "300k", "350k", "400k")
+mortg_by_downpay_all <- purrr::pmap(.l = loan_specs, 
+                                    .f = mortg_by_downpay,
+                                    purchase_price = purchase_price)
 
-mortg_30 <- mortg_by_downpay(purchase_price = purchase_price, 
-                             int_rate_pct = int_rate_pct, loan_years = 30)
-pay_monthly <- get_pay_monthly(mortg_30)
+pay_monthly_all <- purrr::map(mortg_by_downpay_all, .f = get_pay_monthly) %>%
+    dplyr::bind_rows() %>%
+    dplyr::mutate('Loan years' = loan_specs$loan_years) %>%
+  dplyr::relocate('Loan years')
 
-format(round(pay_monthly, 0), nsmall=0, big.mark=",") 
+##### Lifetime Interest ####
+lifetime_int_all <-  purrr::map(.x = mortg_by_downpay_all, 
+                                    .f = function(mortg_by_downpay){
+  purrr::map_dbl(.x = mortg_by_downpay,
+                 .f = function(mortg_){
+                   with(data = mortg_,
+                        (fixedMortgagePayment * 12 * principalAmortizaion) - (purchasePrice - downpayment) )
+                   }) %>%
+                                        format_downpayment_cols(.)
+                                      }) %>%
+    dplyr::bind_rows() %>%
+    dplyr::mutate('Loan years' = loan_specs$loan_years) %>%
+  dplyr::relocate('Loan years') 
+
+##### Simulate home appreciation   ####
+
+# home value models by amortization-down payment
+home_Value_by_downpay_all <- purrr::map(.x = mortg_by_downpay_all, 
+                                    .f = function(mortg_by_downpay){
+                                      purrr::map(.x = mortg_by_downpay,
+                 .f = function(mortg_){
+
+  homeValue(mortg_,
+           propertyTaxRate = property_tax_pct / 100, 
+           maintenance = 2500,
+           housingAssociationDues = 0, 
+           insurance = insurance_monthly * 12,
+           appreciationHome = appreciation_home_annual, 
+           marginalIncomeTaxRate = 0.26,
+           inflation = 0.02,
+           time_years = 20)
+                   }) 
+                                    })
+Home_Value_df <- purrr::map(home_Value_by_downpay_all,
+                            .f = function(homeValue_by_downpay){
+                                      purrr::map(.x = homeValue_by_downpay,
+                 .f = function(homeValue_){ 
+                   homeValue_$get_valueDF() %>%
+                     dplyr::mutate(
+                       downpayment = homeValue_[["downpayment"]],
+                       loan_years = homeValue_[["principalAmortizaion"]]
+                                   )
+                   }) %>% dplyr::bind_rows()
+                              }) %>% dplyr::bind_rows()
+                                    
+
+#####    ####
+
+
 
 ```
 
-The monthly mortgage payment (no fees nor taxes) for a 20 year loan is: 
-```{r monyhly_20, echo=FALSE}
+cash: $410k
 
-mortg_20 <- mortg_by_downpay(purchase_price = purchase_price, 
-                             int_rate_pct = int_rate_pct_20, loan_years = 20)
-pay_monthly <- get_pay_monthly(mortg_20)
 
-format(round(pay_monthly, 0), nsmall=0, big.mark=",") 
+# cash-flow
 
+What the amount we want to put into a downpayment?
+
+For a $ `r purchase_price/1000` K house the monthly mortgage payment (no fees nor taxes) 
+```{r monyhly_pay, echo=FALSE}
+  pay_monthly_all  %>%
+  kableExtra::kable(.,
+                    caption = "Monthly mortgage payment") %>%
+  kableExtra::add_header_above(header = c(" " = 1, "Down Payment" = 5)) %>%
+  kableExtra::kable_styling()  %>%
+  kableExtra::footnote(general = c("Fees & taxes not included"))
 ```
-Monthly costs:
+
+
+
 ```{r, echo=FALSE}
 
 tibble::tribble(
-  ~'', ~`monthly cost`,
-  'property tax', purchase_price*property_tax_pct/100/12,
-  'Home Insurance', 197)
-
+  ~'', ~`monthly cost`, ~`yearly cost`, 
+  'property tax', 
+  purchase_price * property_tax_pct / 100 / 12,
+  purchase_price * property_tax_pct / 100,
+  'Home Insurance', insurance_monthly, insurance_monthly * 12) %>%
+  kableExtra::kable(.,
+                    caption = "Monthly costs:") %>%
+  kableExtra::kable_styling(full_width = FALSE, position = "left")
 ```
 
-Lifetime interest paid:
-```{r int_lifetime, echo=FALSE}
 
-lifetime_int_30 <- unlist(Map(function(tmp) {
-(tmp$fixedMortgagePayment*12*tmp$principalAmortizaion) - (tmp$purchasePrice - tmp$downpayment)   
-}, tmp = mortg_30))
 
-lifetime_int_20 <- unlist(Map(function(tmp) {
-(tmp$fixedMortgagePayment*12*tmp$principalAmortizaion) - (tmp$purchasePrice - tmp$downpayment)   
-}, tmp = mortg_20))
-
-x <- data.table::rbindlist(list(data.frame(Interest = lifetime_int_30,
-                                           Amortization = "30",
-                                 Downpayment = c("200k", "250k", "300k", 
-                                                 "350k", "400k")),
-                                 data.frame(Interest = lifetime_int_20,
-                                           Amortization = "20", 
-                                 Downpayment = c("200k", "250k", "300k", 
-                                                 "350k", "400k"))))
-x$Interest_fmt <- format(round(x$Interest, 0), nsmall=0, big.mark=",") 
-tidyr::pivot_wider(x, id_cols = Amortization, 
-                   names_from = Downpayment, values_from = Interest_fmt)
-
-```
-
-~~Percent of~~ net income
 ```{r, echo=FALSE}
-190*(1-0.26)/12-1.750
+lifetime_int_all %>%
+  kableExtra::kable(.,
+                    caption = "Lifetime interest paid:") %>%
+  kableExtra::add_header_above(header = c(" " = 1, "Down Payment" = 5)) %>%
+  kableExtra::kable_styling()
+
+```
+
+
+
+
+```{r, echo=FALSE}
+year_max <- 10
+
+tmp_ <- Home_Value_df %>%
+  dplyr::filter(Time <= year_max * 12)
+
+tmp_ %>%
+  dplyr::mutate(
+    #time_months = lubridate::duration(Time, units = "months"),
+    #Time = lubridate::as.period(time_months, unit = "years"),
+    Time = Time / 12,
+    downpayment = paste0("$",
+                         as.character(downpayment/1000),       
+                         " k") ) %>%
+  ggplot2::ggplot(data = ., ggplot2::aes(x = Time, y = salesProfit,
+                                         color = downpayment)) +
+  ggplot2::geom_point() +
+  ggplot2::facet_wrap(~loan_years, ncol = 3) +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  ggplot2::scale_x_continuous(breaks = (1:year_max)) +
+  ggplot2::labs(x = "\n Time (Years) ", 
+                y = "Net Profit \n", 
+                title = "Net Profit \n from home sale \n",
+                caption = "") + 
+ ggplot2::theme(plot.title = ggplot2::element_text(hjust = 0.5), 
+                axis.title.x =  ggplot2::element_text(face="bold", 
+                                                      colour="#FF7A33", 
+                                                      size = 12),
+                axis.title.y =  ggplot2::element_text(face="bold", 
+                                                      colour="#FF7A33",
+                                                      size = 12),
+                legend.title =  ggplot2::element_text(face="bold", 
+                                                      size = 10))
+
+```
+
+```{r}
+format_dollar_col <- function(x){
+   paste0("$",
+          format(round(x/1000, 0) * 1000, 
+                 nsmall =0 , big.mark = ","))
+}
+
+tmp_ %>%
+      dplyr::mutate(
+     closing_cost = format_dollar_col(sale_transaction_cost(propertyValue)),
+     cap_tax = format_dollar_col(capitol_gains_tax(basis = purchase_price, 
+                       adj_sales = propertyValue - sale_transaction_cost(propertyValue), 
+                       tax_rate = 0.20, 
+                       tax_limit = 5*10^5) ),
+             propertyValue = format_dollar_col(propertyValue),
+        downpayment = paste0("$",
+       format(round(downpayment/1000, 0), 
+              nsmall =0 , big.mark = ","), " k") ) %>%
+  dplyr::group_by(loan_years, downpayment) %>%
+  dplyr::mutate(
+    housingCosts = format(round(cumsum(housingCosts)/1000,
+                                0) * 1000, 
+                          nsmall=0, big.mark=",") 
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(Time == year_max * 12) %>%
+  dplyr::select(propertyValue, closing_cost, cap_tax,
+                downpayment, loan_years, housingCosts) %>%
+  dplyr::rename(
+    "Home Sale Value" = propertyValue, 
+    "Loan length (years)" = loan_years,
+    "Closing Costs<sup>b</sup>" = closing_cost, 
+    "Capitol Gains Tax" = cap_tax
+  ) %>%
+  unique() %>%
+  tidyr::pivot_wider(names_from = downpayment,
+                     names_prefix = "",
+                     values_from = housingCosts) %>%
+  kableExtra::kable(.,
+                    caption = sprintf("Statistics for sale at year %s",
+                                      year_max),
+                    escape = FALSE) %>%
+  kableExtra::add_header_above(header = c(" " = 4,
+                   "Down Payments" = 5)) %>%
+  kableExtra::add_header_above(header = c(" " = 3,
+                   "Cumulative Home Costs<sup>a</sup>" = 6),
+                    #"Cumulative Home Costs<sup>a</sup>" = 5),
+                   #paste0("Cumulative Home Costs", kableExtra::footnote_marker_alphabet(1)) = 5),
+                 escape = FALSE) %>%
+  kableExtra::kable_styling() %>%
+  kableExtra::collapse_rows(columns = 1:3) %>%
+  kableExtra::footnote(alphabet = c("Home costs include: inital home purchase costs, interest on debt, home insurance, HOA, maintenance, property tax, & interest deduction", "Closing costs: Broker's fee of 6% & Real Estate Excise 1.28% of property sale"))
 ```
 
 # liquidity (cash on hand for crisis or home improvement)
